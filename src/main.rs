@@ -153,7 +153,6 @@ async fn node_listen(addr: SocketAddr) {
 
 #[tokio::main]
 async fn main() {
-    
     let addr = SocketAddr::new(IpAddr::from_str("127.0.0.1").unwrap(), 3032);
 
     let node_1 = Node::new("Abc",addr);
