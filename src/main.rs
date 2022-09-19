@@ -1,85 +1,71 @@
+#[allow(dead_code)]
 #[allow(unused_imports)]
 mod lamport_clock;
 mod event;
 
-use lamport_clock::{LamportClock};
-use event::{Event, Message, EventType};
-use warp::Filter;
-use std::net::{SocketAddr, IpAddr};
-use std::str::FromStr;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::sync::Mutex;
-use nanoid::nanoid;
 use serde::{Deserialize, Serialize};
+use clap::{Parser};
+use std::io::Write;
 
 static _NODES_MAP: Lazy<Mutex<HashMap<String, Node>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 struct Node {
-    id: String,
-    addr: SocketAddr,
-    clock: LamportClock
+    handler: NodeHandler<String>
 }
 
+use message_io::node::{self, NodeHandler, NodeListener, NodeEvent};
+use message_io::network::{NetEvent, Transport};
+
 impl Node {
-    fn new(id: &str, addr: SocketAddr) -> Self {
-        let clock = LamportClock { time_stamp: 0 };
-        Node {
-            id: id.to_string(),
-            addr,
-            clock
-        }
-    }
-    
-    fn send(&mut self, reciever_id: &str, data: String) {
-        let clock = &self.clock;
+    fn new(port: &str) -> Self {
+        let (handler, listener) = node::split::<String>();
 
-        let message = Message {
-            sender_id: self.id.clone(),
-            reciever_id: reciever_id.to_string(),
-            data,
-            time_stamp: clock.time_stamp
+        let node = Node {
+            handler
         };
 
-        let event = Event{
-            id: "123".to_string(),
-            r#type: EventType::Send,
-            message: Some(message) 
-        };
+        node.start_receiver(listener, port);
 
-        self.clock.process_event(event);
-
-        // SEND MESSAGE
+        node
     }
 
-    fn accept(&mut self, message: Message) {
-        let event = Event {
-            id: nanoid!(),
-            r#type: EventType::Recieve,
-            message: Some(message)
-        };
-
-        self.clock.process_event(event);
+    fn send(&self, port: &str, msg: &str) {
+        let (server, _) = self.handler.network().connect(Transport::Udp, format!("127.0.0.1:{port}")).unwrap();
+        println!("sending on {port}");
+        self.handler.network().send(server, msg.as_bytes());
     }
 
-    fn time_event(node_id: String) {
-        std::thread::spawn(move || {
-            loop {
-                {
-                    let nodes = &mut *_NODES_MAP.lock().unwrap();
-                    let mut node = nodes.remove(&node_id).unwrap(); 
-                    let event = Event {
-                        id: nanoid!(),
-                        r#type: EventType::Local,
-                        message: None
-                    };
-                    node.clock.process_event(event);
-                    nodes.insert(node_id.clone(), node);
-                };
-                std::thread::sleep(std::time::Duration::from_secs(1));
+    fn start_receiver(&self, listener: NodeListener<String>, port: &str) {
+        tokio::spawn({
+            let handler = self.handler.clone();
+            let port = port.to_owned();
+            async move {
+                // Listen for TCP, UDP and WebSocket messages at the same time.
+                handler.network().listen(Transport::Udp, format!("0.0.0.0:{port}")).unwrap();
+
+                // Read incoming network events.
+                listener.for_each(move |event| match event {
+                    node::NodeEvent::Network(net_event) => match net_event{
+                        NetEvent::Connected(_endpoint, _ok) => {},
+                        NetEvent::Accepted(_endpoint, _listener) => {}
+                        NetEvent::Disconnected(_endpoint) => {println!("Client disconnected!");},
+                        NetEvent::Message(_, data) => {
+                            println!("Message: {}", String::from_utf8_lossy(data));
+                        },
+                    },
+                    NodeEvent::Signal(_) => {}
+                });
             }
-        }); 
+        });
+    }
+
+    fn stop_receiver(&self)
+    {
+        self.handler.stop();
     }
 }
 
@@ -90,82 +76,48 @@ struct SendReq {
     sender_id: String
 }
 
-async fn handle_recieve_req(message: Message) -> Result<impl warp::Reply, warp::Rejection>  {
-    let nodes = &mut *_NODES_MAP.lock().unwrap();
-    let mut node = nodes.remove(&message.reciever_id).unwrap();
-    node.accept(message);
-    nodes.insert(node.id.clone(), node);
-    Ok(warp::reply::with_status(
-        "Received message",
-        http::StatusCode::CREATED,
-    ))
+#[derive(Parser, Debug)]
+#[clap(author, version, about, long_about = None)]
+enum Args
+{
+    /// Start a receiver with the given name on a given port.
+    Start {port: String},
 }
 
-async fn handle_send_req(req: SendReq) -> Result<impl warp::Reply, warp::Rejection>  {
-    let nodes = &mut *_NODES_MAP.lock().unwrap();
-    let mut node = nodes.remove(&req.receiver_id).unwrap();
-    node.send(&req.receiver_id, req.msg);
-
-    nodes.insert(node.id.clone(), node);
-
-    Ok(warp::reply::with_status(
-        "Processed send request",
-        http::StatusCode::OK,
-    ))
-}
-
-fn receive_msg_req_body() -> impl Filter<Extract = (Message,), Error = warp::Rejection> + Clone {
-    // When accepting a body, we want a JSON body
-    // (and to reject huge payloads)...
-    warp::body::content_length_limit(1024 * 16).and(warp::body::json())
-}
-
-fn send_msg_req_body() -> impl Filter<Extract = (SendReq,), Error = warp::Rejection> + Clone {
-    // When accepting a body, we want a JSON body
-    // (and to reject huge payloads)...
-    warp::body::content_length_limit(1024 * 16).and(warp::body::json())
-}
-
-async fn node_listen(addr: SocketAddr) {
-
-    let accept_message_req = warp::post()
-        .and(warp::path("accept_message"))
-        .and(warp::path::end())
-        .and(receive_msg_req_body())
-        .and_then(handle_recieve_req);
-
-    
-    let send_message_req = warp::post()
-        .and(warp::path("send_message"))
-        .and(warp::path::end())
-        .and(send_msg_req_body())
-        .and_then(handle_send_req);
-    
-    let routes = send_message_req.or(accept_message_req);
-    println!("Server listening on {:#?}", addr);
-
-    warp::serve(routes)
-        .run(addr)
-        .await;
-
-    println!("ERROR. Server stopped listening.");
+fn prompt(name:&str) -> String {
+    let mut line = String::new();
+    print!("{}", name);
+    std::io::stdout().flush().unwrap();
+    std::io::stdin().read_line(&mut line).expect("Error: Could not read a line");
+ 
+    return line.trim().to_string()
 }
 
 #[tokio::main]
 async fn main() {
-    let addr = SocketAddr::new(IpAddr::from_str("127.0.0.1").unwrap(), 3032);
+    let args = Args::parse();
 
-    let node_1 = Node::new("Abc",addr);
-    let node_2 = Node::new("Bcd",addr);
-    Node::time_event(node_1.id.clone());
-    Node::time_event(node_2.id.clone());
-
-    {
-        let nodes = &mut *_NODES_MAP.lock().unwrap();
-        nodes.insert(node_1.id.clone(), node_1);
-        nodes.insert(node_2.id.clone(), node_2);
+    let node = match args {
+        Args::Start { port } => {
+            println!("Starting a node with receiver listening on {port}.");
+            Node::new(&port)
+        }
     };
 
-    node_listen(addr).await;
+    loop {
+        println!("Enter send(s) to send message OR exit(e) to exit");
+        let input = prompt("> ");
+        if input.to_lowercase() == "send" || input.to_lowercase() == "s" {
+            let message = prompt("message: ");
+            let receiver_port = prompt("receiver's port: ");
 
+            node.send(&receiver_port, message.as_str());
+        } 
+        else if input == "exit" || input == "e" { 
+            node.stop_receiver();
+            break; 
+        } else {
+            println!("invalid input retry...");
+        };
+    }
 }

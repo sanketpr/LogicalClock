@@ -22,7 +22,7 @@ impl LamportClock {
                 // TODO: Log error if event data is None
                 let message = event.message.unwrap();
                 let sender_id = &message.sender_id;
-                self.time_stamp = max(self.time_stamp+1, message.time_stamp+1);
+                self.time_stamp = max(self.time_stamp, message.time_stamp) + 1;
                 println!("{} Recieved a Message. Curr time {}", sender_id, self.time_stamp);
             },
             EventType::Send => {
