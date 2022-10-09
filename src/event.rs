@@ -4,7 +4,6 @@ use serde::{Serialize, Deserialize};
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Message {
     pub sender_id: String,
-    pub reciever_id: String,
     pub data: String,
     pub time_stamp: u32,
 }

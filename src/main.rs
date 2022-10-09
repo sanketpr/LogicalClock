@@ -3,29 +3,35 @@
 mod lamport_clock;
 mod event;
 
-use once_cell::sync::Lazy;
-use std::collections::HashMap;
-use std::sync::Mutex;
+use lamport_clock::{Clock, LamportClock};
 use serde::{Deserialize, Serialize};
 use clap::{Parser};
-use std::io::Write;
-
-static _NODES_MAP: Lazy<Mutex<HashMap<String, Node>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+use event::Message;
+use std::{sync::{Arc, Mutex}, io::Write};
 
 #[derive(Clone)]
 struct Node {
-    handler: NodeHandler<String>
+    handler: NodeHandler<Message>,
+    port: String,
+    clock: LamportClock,
 }
 
 use message_io::node::{self, NodeHandler, NodeListener, NodeEvent};
 use message_io::network::{NetEvent, Transport};
+use once_cell::sync::Lazy;
+
+static MESSAGE_QUEUE: Lazy<Arc<Mutex<Vec<Message>>>> = Lazy::new(|| {
+    Arc::new(Mutex::new(Vec::new()))
+});
 
 impl Node {
     fn new(port: &str) -> Self {
-        let (handler, listener) = node::split::<String>();
+        let (handler, listener) = node::split::<Message>();
 
         let node = Node {
-            handler
+            handler,
+            port: port.to_owned(),
+            clock: LamportClock::new(),
         };
 
         node.start_receiver(listener, port);
@@ -36,10 +42,18 @@ impl Node {
     fn send(&self, port: &str, msg: &str) {
         let (server, _) = self.handler.network().connect(Transport::Udp, format!("127.0.0.1:{port}")).unwrap();
         println!("sending on {port}");
-        self.handler.network().send(server, msg.as_bytes());
+        let message = Message{
+            data: msg.to_owned(),
+            sender_id: self.port.to_owned(),
+            time_stamp: self.clock.get_current_timestam()
+        };
+
+        let data = serde_json::to_vec(&message).unwrap();
+        Node::store_message(message);
+        self.handler.network().send(server, &data);
     }
 
-    fn start_receiver(&self, listener: NodeListener<String>, port: &str) {
+    fn start_receiver(&self, listener: NodeListener<Message>, port: &str) {
         tokio::spawn({
             let handler = self.handler.clone();
             let port = port.to_owned();
@@ -54,13 +68,22 @@ impl Node {
                         NetEvent::Accepted(_endpoint, _listener) => {}
                         NetEvent::Disconnected(_endpoint) => {println!("Client disconnected!");},
                         NetEvent::Message(_, data) => {
-                            println!("Message: {}", String::from_utf8_lossy(data));
+                            let message = serde_json::from_slice::<Message>(data).unwrap();
+                            println!("Message: {}. From: {}", message.data, message.sender_id);
+                            Node::store_message(message);
                         },
                     },
                     NodeEvent::Signal(_) => {}
                 });
             }
         });
+    }
+
+    fn store_message(message: Message)
+    {
+        let mut messages_mutex = MESSAGE_QUEUE.lock().unwrap();
+        let messages = &mut *messages_mutex;
+        messages.push(message); 
     }
 
     fn stop_receiver(&self)

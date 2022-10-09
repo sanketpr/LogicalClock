@@ -3,17 +3,25 @@ use std::cmp::max;
 use serde::{Serialize, Deserialize};
 use crate::event::{Event, EventType};
 
+pub trait Clock {
+    fn process_event(&mut self, event: Event) -> u32;
+    fn get_current_timestam(&self) -> u32;
+    fn new() -> Self;
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LamportClock {
     pub time_stamp: u32,
 }
 
-pub trait Clock {
-    fn process_event(&mut self, event: Event) -> u32;
-}
+impl Clock for LamportClock {
+    fn new() -> Self {
+        LamportClock {
+            time_stamp: 0
+        }
+    }
 
-impl LamportClock {
-    pub fn process_event(&mut self, event: Event) -> u32 {
+    fn process_event(&mut self, event: Event) -> u32 {
         match event.r#type {
             EventType::Local => {
                 self.time_stamp += 1;
@@ -36,6 +44,10 @@ impl LamportClock {
                 println!("{} Sent a Message. Curr time {}", sender_id, self.time_stamp);
             }
         };
+        self.time_stamp
+    }
+
+    fn get_current_timestam(&self) -> u32 {
         self.time_stamp
     }
 }
