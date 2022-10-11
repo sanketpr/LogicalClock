@@ -1,8 +1,8 @@
-### Work in progress
+### WIP
 
 ### Lamport Clock Based Chat Room
 - [Lamport clock](https://lamport.azurewebsites.net/pubs/time-clocks.pdf) is a logical clock that helps us define causal order of events in a distrubited system. 
-- This can be useful in determining partial order of events in a system (For example event A in system x "happened before" event B in system y) 
+- This can be useful in determining partial order of events in a system (For example event A in node X "happened before" event B in node Y) 
 - Algorithm of the lamport clock is simple and as following:
 
 Sending a message:
