@@ -21,6 +21,7 @@ if (time_stamp < recv_time_stamp)
 }
 else
 {
+    // probably received out-dated message.
 }
 time_stamp +=1
 ```
