@@ -2,8 +2,10 @@
 #[allow(unused_imports)]
 mod lamport_clock;
 mod event;
+mod logical_clock;
 
-use lamport_clock::{Clock, LamportClock};
+use lamport_clock::LamportClock;
+use logical_clock::LogicalClock;
 use serde::{Deserialize, Serialize};
 use clap::{Parser};
 use event::Message;
@@ -39,18 +41,19 @@ impl Node {
         node
     }
 
-    fn send(&self, port: &str, msg: &str) {
+    fn send(&mut self, port: &str, msg: &str) {
         let (server, _) = self.handler.network().connect(Transport::Udp, format!("127.0.0.1:{port}")).unwrap();
-        println!("sending on {port}");
+        self.clock.tick();
         let message = Message{
             data: msg.to_owned(),
             sender_id: self.port.to_owned(),
-            time_stamp: self.clock.get_current_timestam()
+            time_stamp: *self.clock.get_current_timestam()
         };
 
         let data = serde_json::to_vec(&message).unwrap();
         Node::store_message(message);
         self.handler.network().send(server, &data);
+        println!("Sent..");
     }
 
     fn start_receiver(&self, listener: NodeListener<Message>, port: &str) {
@@ -84,6 +87,15 @@ impl Node {
         let mut messages_mutex = MESSAGE_QUEUE.lock().unwrap();
         let messages = &mut *messages_mutex;
         messages.push(message); 
+    }
+
+    fn replay_message()
+    {
+        let messages_mutex = MESSAGE_QUEUE.lock().unwrap();
+        let messages = &*messages_mutex;
+        messages.iter().for_each(|msg| {
+            println!("Sender: {}\nTime Stamp:{}\nMessage:{}\n-----", msg.sender_id, msg.time_stamp, msg.data);
+        });
     }
 
     fn stop_receiver(&self)
@@ -120,7 +132,7 @@ fn prompt(name:&str) -> String {
 async fn main() {
     let args = Args::parse();
 
-    let node = match args {
+    let mut node = match args {
         Args::Start { port } => {
             println!("Starting a node with receiver listening on {port}.");
             Node::new(&port)
@@ -128,7 +140,7 @@ async fn main() {
     };
 
     loop {
-        println!("Enter send(s) to send message OR exit(e) to exit");
+        println!("Enter:\nsend(s) to send message\nreplay(r) to replay messages\nexit(e) to exit");
         let input = prompt("> ");
         if input.to_lowercase() == "send" || input.to_lowercase() == "s" {
             let message = prompt("message: ");
@@ -136,6 +148,9 @@ async fn main() {
 
             node.send(&receiver_port, message.as_str());
         } 
+        else if input == "replay" || input == "r" {
+            Node::replay_message();
+        }
         else if input == "exit" || input == "e" { 
             node.stop_receiver();
             break; 
