@@ -3,6 +3,7 @@
 mod lamport_clock;
 mod event;
 mod logical_clock;
+mod vector_clock;
 
 use lamport_clock::LamportClock;
 use logical_clock::LogicalClock;

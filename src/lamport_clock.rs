@@ -18,7 +18,7 @@ impl LamportClock {
 }
 
 impl LogicalClock<u32> for LamportClock {
-    fn compare_time_stamp(&self, _time_stamp: &u32) -> Result<u8, LogicalClockError> {
+    fn compare_time_stamp(&self, _time_stamp: &u32) -> Result<i8, LogicalClockError> {
         todo!()
     }
 

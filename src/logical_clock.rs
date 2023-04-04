@@ -1,3 +1,4 @@
+#[derive(Debug)]
 pub enum LogicalClockError {
     ConcurrentTimeStamps,
     // Undefined {
@@ -12,5 +13,5 @@ pub trait LogicalClock<T> {
     /// Returns the current state of local time stamp
     fn get_current_timestam(&self) -> &T;
     /// Return error if timestamps are concurrent.
-    fn compare_time_stamp(&self, time_stamp: &T) -> Result<u8, LogicalClockError>;
+    fn compare_time_stamp(&self, time_stamp: &T) -> Result<i8, LogicalClockError>;
 }
